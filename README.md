@@ -1,5 +1,9 @@
 SimpleSAMLphp
 =============
+
+### This is modified version with SP support for ECP. 
+This fork contains some additional changes for better modularity.
+
 [![Build Status](https://travis-ci.org/simplesamlphp/simplesamlphp.svg?branch=master)](https://travis-ci.org/simplesamlphp/simplesamlphp)
 [![Coverage Status](https://img.shields.io/coveralls/simplesamlphp/simplesamlphp.svg)](https://coveralls.io/r/simplesamlphp/simplesamlphp)
 
