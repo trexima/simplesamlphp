@@ -42,7 +42,7 @@
         "twig/twig": "~1.0",
         "gettext/gettext": "^3.5",
         "jaimeperez/twig-configurable-i18n": "^1.2",
-        "composer-installers-extender": "^1.1.2"
+        "oomphinc/composer-installers-extender": "^1.1.2"
     },
     "require-dev": {
         "phpunit/phpunit": "~4.8.35",
