@@ -158,7 +158,6 @@ class Simple
         assert(false);
     }
 
-
     /**
      * Log the user out.
      *

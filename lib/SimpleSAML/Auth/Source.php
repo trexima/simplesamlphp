@@ -162,6 +162,32 @@ abstract class Source
      */
     public function initLogin($return, $errorURL = null, array $params = array())
     {
+        $state = $this->createState($return, $errorURL, $params);
+
+        try {
+            $this->authenticate($state);
+        } catch (\SimpleSAML\Error\Exception $e) {
+            State::throwException($state, $e);
+        } catch (\Exception $e) {
+            $e = new \SimpleSAML\Error\UnserializableException($e);
+            State::throwException($state, $e);
+        }
+        self::loginCompleted($state);
+    }
+
+    /**
+     * Create base state informations.
+     *
+     * @param string|array $return The URL or function we should direct the user to after authentication. If using a
+     * URL obtained from user input, please make sure to check it by calling \SimpleSAML\Utils\HTTP::checkURLAllowed().
+     * @param string|null $errorURL The URL we should direct the user to after failed authentication. Can be null, in
+     * which case a standard error page will be shown. If using a URL obtained from user input, please make sure to
+     * check it by calling \SimpleSAML\Utils\HTTP::checkURLAllowed().
+     * @param array $params Extra information about the login. Different authentication requestors may provide different
+     * information. Optional, will default to an empty array.
+     */
+    public function createState($return, $errorURL = null, array $params = array())
+    {
         assert(is_string($return) || is_array($return));
         assert(is_string($errorURL) || $errorURL === null);
 
@@ -189,15 +215,7 @@ abstract class Source
             $state[State::EXCEPTION_HANDLER_URL] = $errorURL;
         }
 
-        try {
-            $this->authenticate($state);
-        } catch (\SimpleSAML\Error\Exception $e) {
-            State::throwException($state, $e);
-        } catch (\Exception $e) {
-            $e = new \SimpleSAML\Error\UnserializableException($e);
-            State::throwException($state, $e);
-        }
-        self::loginCompleted($state);
+       return $state;
     }
 
 

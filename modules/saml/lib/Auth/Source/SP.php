@@ -2,6 +2,7 @@
 
 namespace SimpleSAML\Module\saml\Auth\Source;
 
+use SAML2\AuthnRequest;
 use SimpleSAML\Auth\Source;
 use SimpleSAML\Auth\State;
 
@@ -181,6 +182,25 @@ class SP extends Source
      */
     private function startSSO2(\SimpleSAML\Configuration $idpMetadata, array $state)
     {
+        $ar = $this->createSSO2AuthRequest($idpMetadata, $state);
+        $dst = $this->getSSO2AppropriateEndpoint($idpMetadata, $ar);
+        $ar->setDestination($dst['Location']);
+
+        $b = \SAML2\Binding::getBinding($dst['Binding']);
+
+        $this->sendSAML2AuthnRequest($state, $b, $ar);
+
+        assert(false);
+    }
+
+    /**
+     * Create SAML2 SSO request to an IdP.
+     *
+     * @param \SimpleSAML\Configuration $idpMetadata  The metadata of the IdP.
+     * @param array $state  The state array for the current authentication.
+     */
+    private function createSSO2AuthRequest(\SimpleSAML\Configuration $idpMetadata, array $state)
+    {
         if (isset($state['saml:ProxyCount']) && $state['saml:ProxyCount'] < 0) {
             State::throwException(
                 $state,
@@ -200,11 +220,11 @@ class SP extends Source
             $accr = \SimpleSAML\Utils\Arrays::arrayize($state['saml:AuthnContextClassRef']);
             $comp = \SAML2\Constants::COMPARISON_EXACT;
             if (isset($state['saml:AuthnContextComparison']) && in_array($state['AuthnContextComparison'], array(
-                        \SAML2\Constants::COMPARISON_EXACT,
-                        \SAML2\Constants::COMPARISON_MINIMUM,
-                        \SAML2\Constants::COMPARISON_MAXIMUM,
-                        \SAML2\Constants::COMPARISON_BETTER,
-            ), true)) {
+                    \SAML2\Constants::COMPARISON_EXACT,
+                    \SAML2\Constants::COMPARISON_MINIMUM,
+                    \SAML2\Constants::COMPARISON_MAXIMUM,
+                    \SAML2\Constants::COMPARISON_BETTER,
+                ), true)) {
                 $comp = $state['saml:AuthnContextComparison'];
             }
             $ar->setRequestedAuthnContext(array('AuthnContextClassRef' => $accr, 'Comparison' => $comp));
@@ -245,9 +265,9 @@ class SP extends Source
             $IDPList = array();
         }
 
-        $ar->setIDPList(array_unique(array_merge($this->metadata->getArray('IDPList', array()), 
-                                                $idpMetadata->getArray('IDPList', array()),
-                                                (array) $IDPList)));
+        $ar->setIDPList(array_unique(array_merge($this->metadata->getArray('IDPList', array()),
+            $idpMetadata->getArray('IDPList', array()),
+            (array) $IDPList)));
 
         if (isset($state['saml:ProxyCount']) && $state['saml:ProxyCount'] !== null) {
             $ar->setProxyCount($state['saml:ProxyCount']);
@@ -281,24 +301,29 @@ class SP extends Source
         \SimpleSAML\Logger::debug('Sending SAML 2 AuthnRequest to ' .
             var_export($idpMetadata->getString('entityid'), true));
 
-        /* Select appropriate SSO endpoint */
+        return $ar;
+    }
+
+    /**
+     * Select appropriate SSO endpoint.
+     *
+     * @param \SimpleSAML\Configuration $idpMetadata
+     * @param array $state
+     * @return array|null
+     * @throws \Exception
+     */
+    public function getSSO2AppropriateEndpoint(\SimpleSAML\Configuration $idpMetadata, AuthnRequest $ar)
+    {
         if ($ar->getProtocolBinding() === \SAML2\Constants::BINDING_HOK_SSO) {
-            $dst = $idpMetadata->getDefaultEndpoint('SingleSignOnService', array(
-                \SAML2\Constants::BINDING_HOK_SSO)
-            );
-        } else {
-            $dst = $idpMetadata->getDefaultEndpoint('SingleSignOnService', array(
-                \SAML2\Constants::BINDING_HTTP_REDIRECT,
-                \SAML2\Constants::BINDING_HTTP_POST)
+            return $idpMetadata->getDefaultEndpoint('SingleSignOnService', array(
+                    \SAML2\Constants::BINDING_HOK_SSO)
             );
         }
-        $ar->setDestination($dst['Location']);
 
-        $b = \SAML2\Binding::getBinding($dst['Binding']);
-
-        $this->sendSAML2AuthnRequest($state, $b, $ar);
-
-        assert(false);
+        return $idpMetadata->getDefaultEndpoint('SingleSignOnService', array(
+                \SAML2\Constants::BINDING_HTTP_REDIRECT,
+                \SAML2\Constants::BINDING_HTTP_POST)
+        );
     }
 
     /**
@@ -431,6 +456,53 @@ class SP extends Source
 
         $this->startSSO($idp, $state);
         assert(false);
+    }
+
+    public function getAuthRequest($state)
+    {
+        /* We are going to need the authId in order to retrieve this authentication source later. */
+        $state['saml:sp:AuthId'] = $this->authId;
+
+        $idp = $this->idp;
+
+        if (isset($state['saml:idp'])) {
+            $idp = (string)$state['saml:idp'];
+        }
+
+        if (isset($state['saml:IDPList']) && sizeof($state['saml:IDPList']) > 0) {
+            // we have a SAML IDPList (we are a proxy): filter the list of IdPs available
+            $mdh = \SimpleSAML\Metadata\MetaDataStorageHandler::getMetadataHandler();
+            $known_idps = $mdh->getList();
+            $intersection = array_intersect($state['saml:IDPList'], array_keys($known_idps));
+
+            if (empty($intersection)) {
+                // all requested IdPs are unknown
+                throw new \SimpleSAML\Module\saml\Error\NoSupportedIDP(
+                    \SAML2\Constants::STATUS_REQUESTER,
+                    'None of the IdPs requested are supported by this proxy.'
+                );
+            }
+
+            if (!is_null($idp) && !in_array($idp, $intersection, true)) {
+                // the IdP is enforced but not in the IDPList
+                throw new \SimpleSAML\Module\saml\Error\NoAvailableIDP(
+                    \SAML2\Constants::STATUS_REQUESTER,
+                    'None of the IdPs requested are available to this proxy.'
+                );
+            }
+
+            if (is_null($idp) && sizeof($intersection) === 1) {
+                // only one IdP requested or valid
+                $idp = current($state['saml:IDPList']);
+            }
+        }
+
+        $idpMetadata = $this->getIdPMetadata($idp);
+        $ar = $this->createSSO2AuthRequest($idpMetadata, $state);
+        $dst = $this->getSSO2AppropriateEndpoint($idpMetadata, $ar);
+        $ar->setDestination($dst['Location']);
+
+        return $ar;
     }
 
     /**

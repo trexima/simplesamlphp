@@ -8,8 +8,9 @@
  * @package SimpleSAMLphp
  */
 
-// SSP is loaded as a separate project
-if (file_exists(dirname(dirname(__FILE__)).'/vendor/autoload.php')) {
+if (file_exists(__DIR__.'/../../vendor/autoload.php')) {
+    require_once __DIR__.'/../../vendor/autoload.php';
+} else if (file_exists(dirname(dirname(__FILE__)).'/vendor/autoload.php')) { // SSP is loaded as a separate project
     require_once dirname(dirname(__FILE__)).'/vendor/autoload.php';
 } else {  // SSP is loaded as a library
     if (file_exists(dirname(dirname(__FILE__)).'/../../autoload.php')) {
