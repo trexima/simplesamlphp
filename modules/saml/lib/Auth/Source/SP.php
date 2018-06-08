@@ -3,8 +3,10 @@
 namespace SimpleSAML\Module\saml\Auth\Source;
 
 use SAML2\AuthnRequest;
+use SAML2\SOAP;
 use SimpleSAML\Auth\Source;
 use SimpleSAML\Auth\State;
+use SimpleSAML\Module\saml\Auth\Binding\PAOS;
 
 class SP extends Source
 {
@@ -184,12 +186,17 @@ class SP extends Source
     {
         $ar = $this->createSSO2AuthRequest($idpMetadata, $state);
         $dst = $this->getSSO2AppropriateEndpoint($idpMetadata, $ar);
-        $ar->setDestination($dst['Location']);
 
-        $b = \SAML2\Binding::getBinding($dst['Binding']);
+        $b = null;
+        if ($dst['Binding'] === \SAML2\Constants::BINDING_SOAP) {
+            $b = new PAOS(); // PAOS bindings isn't supported by SAML2 for SP(it's only suppoerted for IdP)
+        } else {
+            $ar->setDestination($dst['Location']);
+
+            $b = \SAML2\Binding::getBinding($dst['Binding']);
+        }
 
         $this->sendSAML2AuthnRequest($state, $b, $ar);
-
         assert(false);
     }
 
@@ -209,8 +216,22 @@ class SP extends Source
         }
 
         $ar = \SimpleSAML\Module\saml\Message::buildAuthnRequest($this->metadata, $idpMetadata);
-
         $ar->setAssertionConsumerServiceURL(\SimpleSAML\Module::getModuleURL('saml/sp/saml2-acs.php/' . $this->authId));
+
+        if ($_SERVER['HTTP_ACCEPT'] === 'application/vnd.paos+xml') {
+            // Handle PAOS binding
+            $protbind = $this->metadata->getValueValidate('ProtocolBinding', array(
+                \SAML2\Constants::BINDING_HTTP_POST,
+                \SAML2\Constants::BINDING_HOK_SSO,
+                \SAML2\Constants::BINDING_HTTP_ARTIFACT,
+                \SAML2\Constants::BINDING_HTTP_REDIRECT,
+                \SAML2\Constants::BINDING_PAOS
+            ), \SAML2\Constants::BINDING_PAOS);
+
+            // Set PAOS binding if exists
+            $ar->setProtocolBinding($protbind);
+            $ar->setForceAuthn(true);
+        }
 
         if (isset($state['\SimpleSAML\Auth\Source.ReturnURL'])) {
             $ar->setRelayState($state['\SimpleSAML\Auth\Source.ReturnURL']);
@@ -320,6 +341,12 @@ class SP extends Source
             );
         }
 
+        if ($ar->getProtocolBinding() === \SAML2\Constants::BINDING_PAOS) {
+            return $idpMetadata->getDefaultEndpoint('SingleSignOnService', array(
+                \SAML2\Constants::BINDING_SOAP)
+            );
+        }
+
         return $idpMetadata->getDefaultEndpoint('SingleSignOnService', array(
                 \SAML2\Constants::BINDING_HTTP_REDIRECT,
                 \SAML2\Constants::BINDING_HTTP_POST)
@@ -337,7 +364,37 @@ class SP extends Source
      */
     public function sendSAML2AuthnRequest(array &$state, \SAML2\Binding $binding, \SAML2\AuthnRequest $ar)
     {
-        $binding->send($ar);
+        if ($binding instanceof PAOS) {
+            $customEnvelope = <<<SOAP
+<?xml version="1.0" encoding="utf-8"?>
+<SOAP-ENV:Envelope xmlns:SOAP-ENV="%s">
+    <SOAP-ENV:Header>
+        <paos:Request xmlns:paos="urn:liberty:paos:2003-08" SOAP-ENV:actor="http://schemas.xmlsoap.org/soap/actor/next"
+                          SOAP-ENV:mustUnderstand="1"
+                          responseConsumerURL="%s"
+                          service="urn:oasis:names:tc:SAML:2.0:profiles:SSO:ecp"/>
+            <ecp:Request xmlns:ecp="urn:oasis:names:tc:SAML:2.0:profiles:SSO:ecp" IsPassive="0"
+                         SOAP-ENV:actor="http://schemas.xmlsoap.org/soap/actor/next" SOAP-ENV:mustUnderstand="1">
+                <saml:Issuer xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion">
+                    %s
+                </saml:Issuer>
+                <samlp:IDPList xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol">
+                    <samlp:IDPEntry ProviderID="%s"/>
+                </samlp:IDPList>
+            </ecp:Request>
+    </SOAP-ENV:Header>
+    <SOAP-ENV:Body />
+</SOAP-ENV:Envelope>
+SOAP;
+
+            $idpList = $ar->getIDPList();
+            $customEnvelope = sprintf($customEnvelope, \SAML2\Constants::NS_SOAP, $ar->getAssertionConsumerServiceURL(), $ar->getIssuer(), reset($idpList));
+
+            $binding->send($ar, $customEnvelope);
+        } else {
+            $binding->send($ar);
+        }
+
         assert(false);
     }
 
